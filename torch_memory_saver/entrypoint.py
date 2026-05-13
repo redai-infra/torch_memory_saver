@@ -31,16 +31,23 @@ class TorchMemorySaver:
 
     @contextmanager
     def cuda_graph(
-            self,
-            cuda_graph, pool=None, stream=None, capture_error_mode='global',
-            tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False,
+        self,
+        cuda_graph,
+        pool=None,
+        stream=None,
+        capture_error_mode="global",
+        tag: str = _TAG_DEFAULT,
+        enable_cpu_backup: bool = False,
     ):
         """Similar to `torch.cuda.graph`, but ensures memory in it to be pauseable."""
         self._ensure_initialized()
         with self._impl.cuda_graph(
-                cuda_graph=cuda_graph,
-                pool=pool, stream=stream, capture_error_mode=capture_error_mode,
-                tag=tag, enable_cpu_backup=enable_cpu_backup,
+            cuda_graph=cuda_graph,
+            pool=pool,
+            stream=stream,
+            capture_error_mode=capture_error_mode,
+            tag=tag,
+            enable_cpu_backup=enable_cpu_backup,
         ):
             yield
 
@@ -59,6 +66,16 @@ class TorchMemorySaver:
         """Resume memory for specific tag or all memory if tag is None"""
         self._ensure_initialized()
         self._impl.resume(tag=tag)
+
+    def pre_allocate_cpu_backup(self, tag: Optional[str] = None):
+        """Pre-allocate CPU backup buffers for all managed allocations.
+
+        Call this after model loading to lock pinned host memory while
+        physical memory is still unfragmented.  Subsequent pause() calls
+        will reuse these buffers instead of allocating new ones.
+        """
+        self._ensure_initialized()
+        self._impl.pre_allocate_cpu_backup(tag=tag)
 
     # for compatibility
     @property
@@ -103,8 +120,8 @@ class _TorchMemorySaverImpl:
         _sanity_checks()
         if torch.version.hip:
             # Unlike CUDA where cuMem* are Driver API calls, HIP puts everything in user-space libraries
-            # whose C++ static destructors may run before MemPool's destructor during process exit ("static 
-            # destruction order fiasco"). By clearing _mem_pools in an atexit handler, we ensure MemPool 
+            # whose C++ static destructors may run before MemPool's destructor during process exit ("static
+            # destruction order fiasco"). By clearing _mem_pools in an atexit handler, we ensure MemPool
             # destruction (and thus HIP API calls) happens while the HIP/HSA runtime is still fully alive.
             atexit.register(self._mem_pools.clear)
 
@@ -168,6 +185,10 @@ class _TorchMemorySaverImpl:
         tag_bytes = tag.encode("utf-8") if tag else None
         self._binary_wrapper.cdll.tms_resume(tag_bytes)
 
+    def pre_allocate_cpu_backup(self, tag: Optional[str]):
+        tag_bytes = tag.encode("utf-8") if tag else None
+        self._binary_wrapper.cdll.tms_pre_allocate_cpu_backup(tag_bytes)
+
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda, f"{x.device=}"
         assert x.is_contiguous(), f"{x.shape=} {x.stride()=} {x.dtype=}"
@@ -194,8 +215,7 @@ class _TorchMemorySaverImpl:
         assert ans.stride() == x.stride(), f"{ans.stride()=} {x.stride()=}"
         return ans
 
+
 def _sanity_checks():
     if "expandable_segments:True" in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""):
-        raise RuntimeError(
-            "TorchMemorySaver is disabled for the current process because expandable_segments is not supported yet."
-        )
+        raise RuntimeError("TorchMemorySaver is disabled for the current process because expandable_segments is not supported yet.")

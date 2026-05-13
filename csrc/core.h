@@ -27,6 +27,9 @@ struct AllocationMetadata {
     AllocationState state;
     bool enable_cpu_backup;
     void* cpu_backup;
+    // Whether cpu_backup was allocated with cudaMallocHost (pinned) or
+    // std::malloc (unpinned fallback).  Determines the correct free call.
+    bool cpu_backup_is_pinned = true;
 
 #if TMS_ROCM_LEGACY_CHUNKED
     // ROCm 6.x: Chunked allocation workaround
@@ -48,6 +51,7 @@ public:
 
     void pause(const std::string& tag);
     void resume(const std::string& tag);
+    void pre_allocate_cpu_backup(const std::string& tag);
     void set_memory_margin_bytes(uint64_t value) {
         memory_margin_bytes_.store(value);
     }
