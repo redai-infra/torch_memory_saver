@@ -1,9 +1,54 @@
 #pragma once
 #include <iostream>
 #include <vector>
+#include <cstdlib>
 #include "macro.h"
 
 // #define TMS_DEBUG_LOG
+
+// ---------------------------------------------------------------------------
+// Runtime log level controlled by TMS_LOG_LEVEL env var:
+//   0 = ERROR only (default)
+//   1 = WARN  (non-fatal issues like fallback to unpinned memory)
+//   2 = INFO  (summary per pause/resume/pre_allocate call)
+//   3 = DEBUG (per-allocation details)
+// ---------------------------------------------------------------------------
+inline int tms_log_level() {
+    static int level = -1;
+    if (level < 0) {
+        const char* env = std::getenv("TMS_LOG_LEVEL");
+        level = env ? std::atoi(env) : 0;
+    }
+    return level;
+}
+
+#define TMS_LOG_ERROR(msg) \
+    std::cerr << "[TMS ERROR] " << msg << std::endl
+
+#define TMS_LOG_WARN(msg) \
+    do { if (tms_log_level() >= 1) std::cerr << "[TMS WARN] " << msg << std::endl; } while(false)
+
+#define TMS_LOG_INFO(msg) \
+    do { if (tms_log_level() >= 2) std::cout << "[TMS INFO] " << msg << std::endl; } while(false)
+
+#define TMS_LOG_DEBUG(msg) \
+    do { if (tms_log_level() >= 3) std::cout << "[TMS DEBUG] " << msg << std::endl; } while(false)
+
+// Non-fatal version of CURESULT_CHECK: logs warning but does NOT exit.
+// CONTEXT should be a stream expression providing extra info, e.g.
+//   CURESULT_WARN(cuMemUnmap(...), "tag=" << tag << " size=" << sz);
+#define CURESULT_WARN(EXPR, CONTEXT) \
+  do { \
+    CUresult __result = (EXPR); \
+    if (__result != CUDA_SUCCESS) { \
+        const char* err_str = nullptr; \
+        cuGetErrorString(__result, &err_str); \
+        TMS_LOG_WARN(#EXPR << " failed: CUresult=" \
+                  << __result << " (" << (err_str ? err_str : "Unknown") << ") " \
+                  << CONTEXT \
+                  << " file=" << __FILE__ << " func=" << __func__ << " line=" << __LINE__); \
+    } \
+  } while (false)
 
 // Cannot use pytorch (libc10.so) since LD_PRELOAD happens earlier than `import torch`
 // Thus copy from torch Macros.h
